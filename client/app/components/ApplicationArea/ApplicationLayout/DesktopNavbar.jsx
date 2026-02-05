@@ -52,6 +52,7 @@ function useNavbarActiveState() {
           "Queries.View",
           "Queries.New",
           "Queries.Edit",
+          "Queries.AI",
         ],
         currentRoute.id
       ),
@@ -125,6 +126,13 @@ export default function DesktopNavbar() {
               <Menu.Item key="new-query">
                 <Link href="queries/new" data-test="CreateQueryMenuItem">
                   New Query
+                </Link>
+              </Menu.Item>
+            )}
+            {canCreateQuery && (
+              <Menu.Item key="ai-query">
+                <Link href="queries/ai" data-test="CreateAIQueryMenuItem">
+                  AI Query Builder
                 </Link>
               </Menu.Item>
             )}

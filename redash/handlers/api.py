@@ -93,6 +93,11 @@ from redash.handlers.visualizations import (
     VisualizationListResource,
     VisualizationResource,
 )
+from redash.handlers.ai_assistant import (
+    AIConversationListResource,
+    AIConversationResource,
+    AIConversationMessageResource,
+)
 from redash.handlers.widgets import WidgetListResource, WidgetResource
 from redash.utils import json_dumps
 
@@ -285,3 +290,11 @@ api.add_org_resource(QuerySnippetResource, "/api/query_snippets/<snippet_id>", e
 api.add_org_resource(QuerySnippetListResource, "/api/query_snippets", endpoint="query_snippets")
 
 api.add_org_resource(OrganizationSettings, "/api/settings/organization", endpoint="organization_settings")
+
+api.add_org_resource(AIConversationListResource, "/api/ai/conversations", endpoint="ai_conversations")
+api.add_org_resource(AIConversationResource, "/api/ai/conversations/<conversation_id>", endpoint="ai_conversation")
+api.add_org_resource(
+    AIConversationMessageResource,
+    "/api/ai/conversations/<conversation_id>/messages",
+    endpoint="ai_conversation_messages",
+)

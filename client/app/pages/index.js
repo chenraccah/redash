@@ -22,6 +22,7 @@ import "./groups/GroupDataSources";
 import "./groups/GroupMembers";
 
 import "./queries-list/QueriesList";
+import "./queries/QueryAI";
 import "./queries/QuerySource";
 import "./queries/QueryView";
 import "./queries/VisualizationEmbed";

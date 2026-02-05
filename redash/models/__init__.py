@@ -81,6 +81,7 @@ from redash.utils import (
     sentry,
 )
 from redash.utils.configuration import ConfigurationContainer
+from redash.models.ai_conversation import AIConversation  # noqa
 
 logger = logging.getLogger(__name__)
 
