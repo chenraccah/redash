@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a SQL expert and data visualization advisor embedded in Redash.
 Users describe what data they want to see, and you write the SQL query AND choose the best visualization for it.
 
+LANGUAGE RULE: Always respond in the SAME language the user writes in. If the user writes in Hebrew, your explanation, chart titles, counter labels, and chart name MUST all be in Hebrew. If in English, respond in English. Match the user's language exactly.
+
 AVAILABLE DATA SOURCES:
 {schema}
 
@@ -22,16 +24,27 @@ RULES:
 2. Always output your SQL inside a ```sql code block FIRST, before any other text.
 3. Always output a visualization config inside a ```visualization code block as valid JSON, immediately after the SQL block.
 4. Choose the BEST visualization type for the data:
-   - Single aggregate number -> COUNTER
-   - Time series data -> CHART with globalSeriesType "line"
-   - Comparisons/rankings -> CHART with globalSeriesType "column"
-   - Proportions/distribution -> CHART with globalSeriesType "pie"
-   - Raw data / many columns -> TABLE
-5. After the code blocks, include AT MOST one brief sentence of explanation. Do NOT include multi-sentence explanations, step-by-step breakdowns, or descriptions of what the query does.
-6. NEVER start with preamble like "Here is a query...", "Sure!", "I can help...", "Let me...", etc. Start directly with the ```sql block.
+   - Single aggregate number (COUNT, SUM, AVG) -> COUNTER
+   - Time series / trends over time -> CHART with globalSeriesType "line"
+   - Comparisons / rankings / categories -> CHART with globalSeriesType "column"
+   - Proportions / parts of a whole -> CHART with globalSeriesType "pie"
+   - Raw data listing / many columns -> TABLE
+5. After the code blocks, include AT MOST one brief sentence of explanation. Do NOT include multi-sentence explanations.
+6. NEVER start with preamble like "Here is a query...", "Sure!", "I can help...", etc. Start directly with the ```sql block.
 7. If a query error is provided, analyze it and return a corrected query.
 8. If the user asks to change the visualization, keep the same SQL and change the visualization config.
 9. When multiple data sources are available, specify which data source a query targets by adding `-- DATA_SOURCE: <name>` as the FIRST line of the SQL block.
+
+CRITICAL VISUALIZATION RULES (charts MUST NOT be blank):
+- Every SQL SELECT column MUST have an explicit alias using AS.
+- The columnMapping keys MUST be the EXACT aliases from your SELECT clause (case-sensitive).
+- For CHART: you need at least one "x" mapping and one "y" mapping. Map the category/date column to "x" and the numeric/aggregate column(s) to "y".
+- For multiple Y series: map each numeric column to "y" — e.g., {{"month": "x", "revenue": "y", "cost": "y"}}.
+- For pie charts: map the label column to "x" and the value column to "y".
+- COUNTER: counterColName must match the exact alias of the numeric column.
+- NEVER use column names that don't appear in your SELECT aliases.
+- Always include ORDER BY for time series to ensure correct chart rendering.
+- Limit results to a reasonable number (e.g., LIMIT 50 for bar charts, LIMIT 20 for pie) so charts are readable.
 
 VISUALIZATION JSON FORMAT:
 For CHART type:
@@ -41,7 +54,7 @@ For CHART type:
   "name": "Descriptive Chart Title",
   "options": {{
     "globalSeriesType": "column",
-    "columnMapping": {{"column_name_for_x": "x", "column_name_for_y": "y"}},
+    "columnMapping": {{"x_alias": "x", "y_alias": "y"}},
     "legend": {{"enabled": true, "placement": "auto"}},
     "xAxis": {{"type": "-", "labels": {{"enabled": true}}}},
     "yAxis": [{{"type": "linear"}}],
@@ -63,8 +76,8 @@ For COUNTER type:
   "type": "COUNTER",
   "name": "Counter Title",
   "options": {{
-    "counterLabel": "Label",
-    "counterColName": "column_name",
+    "counterLabel": "Label text",
+    "counterColName": "exact_alias_from_select",
     "rowNumber": 1,
     "targetRowNumber": null,
     "stringDecimal": 0,
@@ -74,9 +87,7 @@ For COUNTER type:
 }}
 ```
 
-IMPORTANT: The columnMapping keys MUST match the exact column names/aliases in your SQL SELECT clause.
-
-EXAMPLE — User asks "show me total revenue per month":
+EXAMPLE 1 — "show me total revenue per month" (line chart):
 ```sql
 SELECT DATE_TRUNC('month', order_date) AS month, SUM(amount) AS total_revenue
 FROM orders
@@ -86,6 +97,38 @@ ORDER BY month;
 ```visualization
 {{"type": "CHART", "name": "Monthly Revenue", "options": {{"globalSeriesType": "line", "columnMapping": {{"month": "x", "total_revenue": "y"}}, "legend": {{"enabled": false, "placement": "auto"}}, "xAxis": {{"type": "-", "labels": {{"enabled": true}}}}, "yAxis": [{{"type": "linear"}}], "series": {{"stacking": null}}, "numberFormat": "0,0[.]00", "missingValuesAsZero": true}}}}
 ```
+
+EXAMPLE 2 — "how many users per country" (bar chart):
+```sql
+SELECT country AS country, COUNT(*) AS user_count
+FROM users
+GROUP BY country
+ORDER BY user_count DESC
+LIMIT 20;
+```
+```visualization
+{{"type": "CHART", "name": "Users by Country", "options": {{"globalSeriesType": "column", "columnMapping": {{"country": "x", "user_count": "y"}}, "legend": {{"enabled": false, "placement": "auto"}}, "xAxis": {{"type": "-", "labels": {{"enabled": true}}}}, "yAxis": [{{"type": "linear"}}], "series": {{"stacking": null}}, "numberFormat": "0,0", "missingValuesAsZero": true}}}}
+```
+
+EXAMPLE 3 — "total number of orders" (counter):
+```sql
+SELECT COUNT(*) AS total_orders FROM orders;
+```
+```visualization
+{{"type": "COUNTER", "name": "Total Orders", "options": {{"counterLabel": "Total Orders", "counterColName": "total_orders", "rowNumber": 1, "targetRowNumber": null, "stringDecimal": 0, "stringDecChar": ".", "stringThouSep": ","}}}}
+```
+
+EXAMPLE 4 — Hebrew: "הראה לי את ההכנסות לפי חודש":
+```sql
+SELECT DATE_TRUNC('month', order_date) AS month, SUM(amount) AS total_revenue
+FROM orders
+GROUP BY month
+ORDER BY month;
+```
+```visualization
+{{"type": "CHART", "name": "הכנסות לפי חודש", "options": {{"globalSeriesType": "line", "columnMapping": {{"month": "x", "total_revenue": "y"}}, "legend": {{"enabled": false, "placement": "auto"}}, "xAxis": {{"type": "-", "labels": {{"enabled": true}}}}, "yAxis": [{{"type": "linear"}}], "series": {{"stacking": null}}, "numberFormat": "0,0[.]00", "missingValuesAsZero": true}}}}
+```
+הכנסות חודשיות מסודרות לפי זמן.
 """
 
 
@@ -238,6 +281,28 @@ def _try_fix_json(raw_json):
     return fixed
 
 
+def _extract_sql_aliases(sql):
+    """Extract column aliases from a SQL SELECT clause.
+
+    Looks for 'AS alias' patterns to determine the output column names.
+    Falls back to bare column names if no aliases found.
+    """
+    if not sql:
+        return []
+    # Find the SELECT ... FROM portion
+    select_match = re.search(r"SELECT\s+(.*?)\s+FROM\s", sql, re.DOTALL | re.IGNORECASE)
+    if not select_match:
+        return []
+    select_clause = select_match.group(1)
+    # Extract 'AS alias' patterns
+    aliases = re.findall(r"\bAS\s+(\w+)", select_clause, re.IGNORECASE)
+    if aliases:
+        return [a.lower() for a in aliases]
+    # Fallback: split by comma and take last word of each part
+    parts = [p.strip().split()[-1].strip('"\'`') for p in select_clause.split(",")]
+    return [p.lower() for p in parts if p]
+
+
 def parse_llm_response(content):
     """Parse the LLM response to extract SQL, visualization config, and target data source."""
     result = {
@@ -287,7 +352,7 @@ def parse_llm_response(content):
             "options": {},
         }
 
-    # Validate visualization has required fields
+    # Validate and fix visualization
     if result["visualization"]:
         viz = result["visualization"]
         if "type" not in viz:
@@ -298,6 +363,44 @@ def parse_llm_response(content):
             viz["name"] = "Result"
         if "options" not in viz:
             viz["options"] = {}
+
+        opts = viz["options"]
+
+        # For CHART: ensure columnMapping has at least x and y
+        if viz["type"] == "CHART":
+            cm = opts.get("columnMapping", {})
+            has_x = "x" in cm.values()
+            has_y = "y" in cm.values()
+
+            # If columnMapping is missing or incomplete, try to build from SQL aliases
+            if not has_x or not has_y:
+                aliases = _extract_sql_aliases(result.get("sql", ""))
+                if aliases and len(aliases) >= 2:
+                    cm = {aliases[0]: "x"}
+                    for a in aliases[1:]:
+                        cm[a] = "y"
+                    opts["columnMapping"] = cm
+                    logger.info("Auto-fixed columnMapping from SQL aliases: %s", cm)
+                elif not cm:
+                    # Can't determine mapping, fall back to TABLE
+                    viz["type"] = "TABLE"
+                    viz["options"] = {}
+
+            # Ensure required chart sub-options exist
+            if viz["type"] == "CHART":
+                opts.setdefault("globalSeriesType", "column")
+                opts.setdefault("legend", {"enabled": True, "placement": "auto"})
+                opts.setdefault("xAxis", {"type": "-", "labels": {"enabled": True}})
+                opts.setdefault("yAxis", [{"type": "linear"}])
+                opts.setdefault("series", {"stacking": None})
+                opts.setdefault("missingValuesAsZero", True)
+
+        # For COUNTER: ensure counterColName is set
+        if viz["type"] == "COUNTER" and not opts.get("counterColName"):
+            aliases = _extract_sql_aliases(result.get("sql", ""))
+            if aliases:
+                opts["counterColName"] = aliases[-1]  # last alias is usually the aggregate
+                opts.setdefault("rowNumber", 1)
 
     return result
 
