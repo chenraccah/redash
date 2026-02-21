@@ -105,8 +105,9 @@ tests() {
   exec pytest $TEST_ARGS
 }
 
-# Allow REDASH_SERVICE env var to set the default command (useful for Railway/PaaS)
-if [ -z "$1" ] && [ -n "$REDASH_SERVICE" ]; then
+# Allow REDASH_SERVICE env var to override the command (useful for Railway/PaaS
+# where all services share the same Dockerfile CMD)
+if [ -n "$REDASH_SERVICE" ]; then
   set -- "$REDASH_SERVICE"
 fi
 
