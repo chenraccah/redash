@@ -135,8 +135,21 @@ class AIConversationMessageResource(BaseResource):
         for ds_id in data_source_ids:
             try:
                 ds = models.DataSource.get_by_id(ds_id)
-                ds_schema = ds.get_schema() or []
                 ds_db_type = ds.query_runner.syntax or "sql"
+                try:
+                    ds_schema = ds.get_schema() or []
+                except Exception as e:
+                    logger.warning(
+                        "Could not fetch schema for data source %s: %s",
+                        ds_id,
+                        e,
+                    )
+                    ds_schema = []
+
+                # Also try the cached schema if live fetch failed
+                if not ds_schema:
+                    ds_schema = ds.get_cached_schema() or []
+
                 schema[ds_id] = {
                     "name": ds.name,
                     "description": ds.description or "",
@@ -146,7 +159,7 @@ class AIConversationMessageResource(BaseResource):
                 db_type = ds_db_type  # use last as default
             except Exception as e:
                 logger.warning(
-                    "Could not fetch schema for data source %s: %s",
+                    "Could not load data source %s: %s",
                     ds_id,
                     e,
                 )
