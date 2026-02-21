@@ -30,17 +30,84 @@ function renderMarkdown(content) {
   return cleaned;
 }
 
+function getQuickActions(visualization) {
+  if (!visualization) return [];
+  const type = visualization.type;
+  const seriesType = (visualization.options || {}).globalSeriesType;
+
+  if (type === "CHART") {
+    if (seriesType === "pie") {
+      return ["Show as bar chart", "Show as table"];
+    }
+    return ["Show as pie chart", "Add date filter", "Show top 10 only"];
+  }
+  if (type === "COUNTER") {
+    return ["Break down by category", "Show trend over time"];
+  }
+  if (type === "TABLE") {
+    return ["Show as bar chart", "Summarize as counter"];
+  }
+  return [];
+}
+
 export default function AssistantMessage({
   message,
   queryResult,
   isExecuting,
   onEditAndRun,
   onSaveQuery,
+  onSaveToDashboard,
+  onQuickAction,
   dbType,
   schema,
 }) {
   const [editedSql, setEditedSql] = useState(message.sql || "");
+  const [copied, setCopied] = useState(false);
+  const [vizHeight, setVizHeight] = useState(300);
   const textareaRef = useRef(null);
+
+  const handleCopy = useCallback(
+    (e) => {
+      e.stopPropagation();
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = message.sql;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Copy failed
+      }
+    },
+    [message.sql]
+  );
+
+  const handleResizeStart = useCallback(
+    (e) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = vizHeight;
+
+      const onMove = (moveEvent) => {
+        const delta = moveEvent.clientY - startY;
+        setVizHeight(Math.min(800, Math.max(150, startHeight + delta)));
+      };
+
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [vizHeight]
+  );
 
   const handleRunEdited = useCallback(() => {
     if (editedSql.trim() && onEditAndRun) {
@@ -55,6 +122,13 @@ export default function AssistantMessage({
     }
   }, [editedSql, message.sql, message.visualization, onSaveQuery]);
 
+  const handleSaveToDashboard = useCallback(() => {
+    const sql = editedSql.trim() || message.sql;
+    if (sql && onSaveToDashboard) {
+      onSaveToDashboard(sql, message.visualization);
+    }
+  }, [editedSql, message.sql, message.visualization, onSaveToDashboard]);
+
   const vizObject = message.visualization
     ? {
         id: 0,
@@ -63,6 +137,24 @@ export default function AssistantMessage({
         options: message.visualization.options || {},
       }
     : { id: 0, type: "TABLE", name: "Result", options: {} };
+
+  const quickActions =
+    !isExecuting && queryResult && message.visualization
+      ? getQuickActions(message.visualization)
+      : [];
+
+  const sqlPanelHeader = (
+    <span className="ai-sql-header">
+      <i className="fa fa-code ai-sql-header__icon" /> View SQL
+      <Tooltip title={copied ? "Copied!" : "Copy SQL"}>
+        <button
+          className={`ai-copy-btn${copied ? " ai-copy-btn--copied" : ""}`}
+          onClick={handleCopy}>
+          <i className={copied ? "fa fa-check" : "fa fa-copy"} />
+        </button>
+      </Tooltip>
+    </span>
+  );
 
   return (
     <div className="ai-message ai-message--assistant">
@@ -83,10 +175,10 @@ export default function AssistantMessage({
           </div>
         )}
 
-        {/* Collapsible SQL peek */}
+        {/* Collapsible SQL peek with copy button */}
         {message.sql && (
           <Collapse ghost className="ai-sql-peek">
-            <Panel header="View SQL" key="sql">
+            <Panel header={sqlPanelHeader} key="sql">
               <textarea
                 ref={textareaRef}
                 className="ai-sql-editor"
@@ -110,13 +202,18 @@ export default function AssistantMessage({
           </div>
         )}
         {queryResult && !isExecuting && (
-          <div className="ai-viz-container">
-            <VisualizationRenderer
-              visualization={vizObject}
-              queryResult={queryResult}
-              context="query"
-            />
-          </div>
+          <>
+            <div className="ai-viz-container" style={{ height: vizHeight }}>
+              <VisualizationRenderer
+                visualization={vizObject}
+                queryResult={queryResult}
+                context="query"
+              />
+            </div>
+            <div className="ai-viz-resize-handle" onMouseDown={handleResizeStart}>
+              <div className="ai-viz-resize-grip" />
+            </div>
+          </>
         )}
 
         {/* Action buttons */}
@@ -127,6 +224,25 @@ export default function AssistantMessage({
                 <i className="fa fa-save" /> Save Query
               </Button>
             </Tooltip>
+            <Tooltip title="Save query and add to a dashboard">
+              <Button size="small" onClick={handleSaveToDashboard}>
+                <i className="fa fa-tachometer" /> Add to Dashboard
+              </Button>
+            </Tooltip>
+          </div>
+        )}
+
+        {/* Quick action suggestions */}
+        {quickActions.length > 0 && (
+          <div className="ai-quick-actions">
+            {quickActions.map((action) => (
+              <button
+                key={action}
+                className="ai-quick-action"
+                onClick={() => onQuickAction && onQuickAction(action)}>
+                {action}
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -145,6 +261,8 @@ AssistantMessage.propTypes = {
   isExecuting: PropTypes.bool,
   onEditAndRun: PropTypes.func,
   onSaveQuery: PropTypes.func,
+  onSaveToDashboard: PropTypes.func,
+  onQuickAction: PropTypes.func,
   dbType: PropTypes.string,
   schema: PropTypes.array,
 };
@@ -154,6 +272,8 @@ AssistantMessage.defaultProps = {
   isExecuting: false,
   onEditAndRun: null,
   onSaveQuery: null,
+  onSaveToDashboard: null,
+  onQuickAction: null,
   dbType: "sql",
   schema: [],
 };

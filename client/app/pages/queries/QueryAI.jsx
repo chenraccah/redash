@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import Select from "antd/lib/select";
 import Button from "antd/lib/button";
 import Input from "antd/lib/input";
-import Spin from "antd/lib/spin";
+import Modal from "antd/lib/modal";
 import Link from "@/components/Link";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
 import routes from "@/services/routes";
@@ -12,6 +12,7 @@ import { Query } from "@/services/query";
 import Visualization from "@/services/visualization";
 import QueryResult from "@/services/query-result";
 import AIAssistant from "@/services/ai-assistant";
+import { Dashboard } from "@/services/dashboard";
 import UserMessage from "@/components/ai-assistant/UserMessage";
 import AssistantMessage from "@/components/ai-assistant/AssistantMessage";
 import ChatHistorySidebar from "@/components/ai-assistant/ChatHistorySidebar";
@@ -31,6 +32,15 @@ function QueryAIPage() {
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [conversations, setConversations] = useState([]);
+
+  // Dashboard modal state
+  const [showDashboardModal, setShowDashboardModal] = useState(false);
+  const [pendingSaveData, setPendingSaveData] = useState(null);
+  const [dashboardList, setDashboardList] = useState([]);
+  const [selectedDashboardId, setSelectedDashboardId] = useState(null);
+  const [newDashboardName, setNewDashboardName] = useState("");
+  const [dashboardSaving, setDashboardSaving] = useState(false);
+
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
 
@@ -145,54 +155,70 @@ function QueryAIPage() {
     [resolveDataSourceId, selectedDataSourceIds, conversation]
   );
 
-  const sendMessage = useCallback(async () => {
-    const text = inputValue.trim();
-    if (!text || isSending) return;
+  // Core send logic — used by both input bar and quick actions
+  const doSend = useCallback(
+    async (text) => {
+      if (!text || isSending) return;
 
-    if (selectedDataSourceIds.length === 0) {
-      notification.warning("Please select at least one data source.");
-      return;
-    }
+      if (selectedDataSourceIds.length === 0) {
+        notification.warning("Please select at least one data source.");
+        return;
+      }
 
-    setIsSending(true);
-    setInputValue("");
+      setIsSending(true);
 
-    try {
-      let conv = conversation;
+      try {
+        let conv = conversation;
 
-      // Create conversation if needed
-      if (!conv) {
-        conv = await AIAssistant.createConversation({
+        // Create conversation if needed
+        if (!conv) {
+          conv = await AIAssistant.createConversation({
+            data_source_ids: selectedDataSourceIds,
+            data_source_id: selectedDataSourceIds[0],
+          });
+          setConversation(conv);
+        }
+
+        // Send the message
+        const result = await AIAssistant.sendMessage(conv.id, {
+          message: text,
           data_source_ids: selectedDataSourceIds,
-          data_source_id: selectedDataSourceIds[0],
         });
-        setConversation(conv);
+
+        const updatedConv = result.conversation;
+        setConversation(updatedConv);
+        setMessages(updatedConv.messages);
+        refreshConversations();
+
+        // Auto-execute SQL if present in the response
+        const lastMsg = updatedConv.messages[updatedConv.messages.length - 1];
+        if (lastMsg && lastMsg.sql) {
+          executeSQL(lastMsg.sql, updatedConv.messages.length - 1, lastMsg.target_data_source);
+        }
+      } catch (err) {
+        const errorMsg =
+          err.response?.data?.message || err.message || "Unknown error";
+        notification.error("AI Assistant error: " + errorMsg);
+      } finally {
+        setIsSending(false);
       }
+    },
+    [isSending, selectedDataSourceIds, conversation, executeSQL, refreshConversations]
+  );
 
-      // Send the message
-      const result = await AIAssistant.sendMessage(conv.id, {
-        message: text,
-        data_source_ids: selectedDataSourceIds,
-      });
+  const sendMessage = useCallback(() => {
+    const text = inputValue.trim();
+    if (!text) return;
+    setInputValue("");
+    doSend(text);
+  }, [inputValue, doSend]);
 
-      const updatedConv = result.conversation;
-      setConversation(updatedConv);
-      setMessages(updatedConv.messages);
-      refreshConversations();
-
-      // Auto-execute SQL if present in the response
-      const lastMsg = updatedConv.messages[updatedConv.messages.length - 1];
-      if (lastMsg && lastMsg.sql) {
-        executeSQL(lastMsg.sql, updatedConv.messages.length - 1, lastMsg.target_data_source);
-      }
-    } catch (err) {
-      const errorMsg =
-        err.response?.data?.message || err.message || "Unknown error";
-      notification.error("AI Assistant error: " + errorMsg);
-    } finally {
-      setIsSending(false);
-    }
-  }, [inputValue, isSending, selectedDataSourceIds, conversation, executeSQL, refreshConversations]);
+  const handleQuickAction = useCallback(
+    (text) => {
+      doSend(text);
+    },
+    [doSend]
+  );
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -249,6 +275,110 @@ function QueryAIPage() {
     },
     [resolveDataSourceId, conversation]
   );
+
+  // Dashboard flow: open modal
+  const handleSaveToDashboard = useCallback(
+    (sql, vizConfig, targetDataSourceName) => {
+      setPendingSaveData({ sql, vizConfig, targetDataSourceName });
+      setSelectedDashboardId(null);
+      setNewDashboardName("");
+
+      // Fetch user's dashboards
+      Dashboard.query({ page_size: 250 })
+        .then((response) => {
+          setDashboardList(response.results || []);
+          setShowDashboardModal(true);
+        })
+        .catch(() => {
+          // If fetch fails, still show modal with "create new" option
+          setDashboardList([]);
+          setShowDashboardModal(true);
+        });
+    },
+    []
+  );
+
+  // Dashboard flow: confirm save + add widget
+  const confirmDashboardSave = useCallback(async () => {
+    if (!pendingSaveData) return;
+    if (!selectedDashboardId) {
+      notification.warning("Please select a dashboard or create a new one.");
+      return;
+    }
+
+    const { sql, vizConfig, targetDataSourceName } = pendingSaveData;
+    const dsId = resolveDataSourceId(targetDataSourceName);
+    if (!dsId || !sql) return;
+
+    setDashboardSaving(true);
+
+    try {
+      // 1. Save the query
+      const savedQuery = await Query.save({
+        name: conversation ? conversation.title : "AI Generated Query",
+        query: sql,
+        data_source_id: dsId,
+        is_draft: false,
+        options: {},
+      });
+
+      // 2. Create or use default visualization
+      let vizForDashboard;
+      if (vizConfig && vizConfig.type && vizConfig.type !== "TABLE") {
+        vizForDashboard = await Visualization.save({
+          query_id: savedQuery.id,
+          type: vizConfig.type,
+          name: vizConfig.name || "AI Generated",
+          options: vizConfig.options || {},
+        });
+      } else {
+        // Use the auto-created TABLE visualization
+        vizForDashboard =
+          savedQuery.visualizations && savedQuery.visualizations[0];
+      }
+
+      if (!vizForDashboard || !vizForDashboard.id) {
+        notification.error("Could not create visualization.");
+        return;
+      }
+
+      // 3. Get or create the dashboard
+      let dashboard;
+      if (selectedDashboardId === "new") {
+        dashboard = await Dashboard.save({
+          name: newDashboardName || "AI Dashboard",
+        });
+      } else {
+        dashboard = await Dashboard.get({ id: selectedDashboardId });
+      }
+
+      // 4. Add the widget
+      await dashboard.addWidget(vizForDashboard);
+
+      const dashUrl = dashboard.url || `dashboards/${dashboard.id}`;
+      notification.success(
+        <span>
+          Added to dashboard!{" "}
+          <Link href={dashUrl}>View dashboard</Link>
+        </span>
+      );
+
+      setShowDashboardModal(false);
+      setPendingSaveData(null);
+    } catch (err) {
+      notification.error(
+        "Failed to add to dashboard: " + (err.message || "Unknown error")
+      );
+    } finally {
+      setDashboardSaving(false);
+    }
+  }, [
+    pendingSaveData,
+    selectedDashboardId,
+    newDashboardName,
+    resolveDataSourceId,
+    conversation,
+  ]);
 
   const handleNewConversation = useCallback(() => {
     setConversation(null);
@@ -389,6 +519,8 @@ function QueryAIPage() {
                 isExecuting={!!executingMessages[idx]}
                 onEditAndRun={(sql, vizConfig) => handleEditAndRun(sql, vizConfig, idx, msg.target_data_source)}
                 onSaveQuery={(sql, vizConfig) => handleSaveQuery(sql, vizConfig, msg.target_data_source)}
+                onSaveToDashboard={(sql, vizConfig) => handleSaveToDashboard(sql, vizConfig, msg.target_data_source)}
+                onQuickAction={handleQuickAction}
               />
             )
           )}
@@ -399,7 +531,11 @@ function QueryAIPage() {
                 <i className="fa fa-magic" />
               </div>
               <div className="ai-message__bubble ai-message__bubble--assistant">
-                <Spin size="small" /> Thinking...
+                <div className="ai-typing-dots">
+                  <span />
+                  <span />
+                  <span />
+                </div>
               </div>
             </div>
           )}
@@ -430,6 +566,46 @@ function QueryAIPage() {
           </Button>
         </div>
       </div>
+
+      {/* Dashboard picker modal */}
+      <Modal
+        title="Add to Dashboard"
+        visible={showDashboardModal}
+        onOk={confirmDashboardSave}
+        onCancel={() => {
+          setShowDashboardModal(false);
+          setPendingSaveData(null);
+        }}
+        confirmLoading={dashboardSaving}
+        okText="Add to Dashboard">
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ marginBottom: 6, fontWeight: 500 }}>Select a dashboard:</div>
+          <Select
+            style={{ width: "100%" }}
+            placeholder="Choose a dashboard..."
+            value={selectedDashboardId}
+            onChange={(val) => setSelectedDashboardId(val)}
+            showSearch
+            optionFilterProp="children">
+            <Option value="new">+ Create new dashboard</Option>
+            {dashboardList.map((d) => (
+              <Option key={d.id} value={d.id}>
+                {d.name}
+              </Option>
+            ))}
+          </Select>
+        </div>
+        {selectedDashboardId === "new" && (
+          <div>
+            <div style={{ marginBottom: 6, fontWeight: 500 }}>Dashboard name:</div>
+            <Input
+              placeholder="My Dashboard"
+              value={newDashboardName}
+              onChange={(e) => setNewDashboardName(e.target.value)}
+            />
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
