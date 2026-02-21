@@ -63,7 +63,7 @@ export default function AssistantMessage({
 }) {
   const [editedSql, setEditedSql] = useState(message.sql || "");
   const [copied, setCopied] = useState(false);
-  const [vizHeight, setVizHeight] = useState(300);
+  const [vizHeight, setVizHeight] = useState(500);
   const textareaRef = useRef(null);
 
   const handleCopy = useCallback(
