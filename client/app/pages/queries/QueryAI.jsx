@@ -167,6 +167,12 @@ function QueryAIPage() {
 
       setIsSending(true);
 
+      // Show user message immediately before AI responds
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content: text, timestamp: new Date().toISOString() },
+      ]);
+
       try {
         let conv = conversation;
 
@@ -187,6 +193,7 @@ function QueryAIPage() {
 
         const updatedConv = result.conversation;
         setConversation(updatedConv);
+        // Replace optimistic messages with full conversation from server
         setMessages(updatedConv.messages);
         refreshConversations();
 
@@ -396,17 +403,46 @@ function QueryAIPage() {
           setMessages(conv.messages || []);
           setQueryResults({});
           setExecutingMessages({});
-          if (conv.data_source_ids && conv.data_source_ids.length > 0) {
-            setSelectedDataSourceIds(conv.data_source_ids);
-          } else if (conv.data_source_id) {
-            setSelectedDataSourceIds([conv.data_source_id]);
-          }
+
+          // Determine data source IDs from conversation
+          const dsIds = conv.data_source_ids && conv.data_source_ids.length > 0
+            ? conv.data_source_ids
+            : conv.data_source_id
+              ? [conv.data_source_id]
+              : selectedDataSourceIds;
+          setSelectedDataSourceIds(dsIds);
+
+          // Re-execute all SQL queries to restore visualizations
+          const fallbackDsId = dsIds[0];
+          (conv.messages || []).forEach((msg, idx) => {
+            if (msg.role === "assistant" && msg.sql) {
+              let dsId = fallbackDsId;
+              if (msg.target_data_source) {
+                const match = dataSources.find(
+                  (ds) => ds.name.toLowerCase() === msg.target_data_source.toLowerCase()
+                );
+                if (match) dsId = match.id;
+              }
+              if (dsId) {
+                setExecutingMessages((prev) => ({ ...prev, [idx]: true }));
+                const qr = QueryResult.get(dsId, msg.sql, {}, false, -1, null);
+                qr.toPromise()
+                  .then((result) => {
+                    setQueryResults((prev) => ({ ...prev, [idx]: result }));
+                    setExecutingMessages((prev) => ({ ...prev, [idx]: false }));
+                  })
+                  .catch(() => {
+                    setExecutingMessages((prev) => ({ ...prev, [idx]: false }));
+                  });
+              }
+            }
+          });
         })
         .catch(() => {
           notification.error("Failed to load conversation.");
         });
     },
-    []
+    [dataSources, selectedDataSourceIds]
   );
 
   const handleArchiveConversation = useCallback(
