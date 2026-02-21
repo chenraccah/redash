@@ -41,10 +41,16 @@ class AIConversationListResource(BaseResource):
         _check_ai_enabled()
 
         req = request.get_json(force=True)
+        data_source_ids = req.get("data_source_ids", [])
+        # Backwards compat: accept single data_source_id
+        if not data_source_ids and req.get("data_source_id"):
+            data_source_ids = [req["data_source_id"]]
+
         conversation = models.AIConversation(
             org_id=self.current_org.id,
             user_id=self.current_user.id,
-            data_source_id=req.get("data_source_id"),
+            data_source_id=req.get("data_source_id") or (data_source_ids[0] if data_source_ids else None),
+            data_source_ids=data_source_ids,
             query_id=req.get("query_id"),
             title=req.get("title", "New Conversation"),
             messages=[],
@@ -93,8 +99,8 @@ class AIConversationMessageResource(BaseResource):
         """Send a user message and get an AI response."""
         _check_ai_enabled()
 
-        if not settings.AI_OPENAI_API_KEY:
-            abort(400, message="OpenAI API key is not configured.")
+        if not settings.AI_LLM_BASE_URL:
+            abort(400, message="LLM endpoint is not configured. Set REDASH_AI_LLM_BASE_URL.")
 
         conversation = models.AIConversation.query.filter_by(
             id=conversation_id,
@@ -110,26 +116,45 @@ class AIConversationMessageResource(BaseResource):
             abort(400, message="Message cannot be empty.")
 
         error_context = req.get("error_context")
+        data_source_ids = req.get("data_source_ids") or conversation.data_source_ids or []
         data_source_id = req.get("data_source_id") or conversation.data_source_id
 
-        # Update data source if changed
+        # Backwards compat: if no data_source_ids but single id exists
+        if not data_source_ids and data_source_id:
+            data_source_ids = [data_source_id]
+
+        # Update stored values if changed
+        if data_source_ids != (conversation.data_source_ids or []):
+            conversation.data_source_ids = data_source_ids
         if data_source_id and data_source_id != conversation.data_source_id:
             conversation.data_source_id = data_source_id
 
-        # Fetch schema for the data source
-        schema = []
+        # Fetch schema from all data sources
+        schema = {}
         db_type = "sql"
-        if data_source_id:
+        for ds_id in data_source_ids:
             try:
-                data_source = models.DataSource.get_by_id(data_source_id)
-                schema = data_source.get_schema() or []
-                db_type = data_source.query_runner.syntax or "sql"
+                ds = models.DataSource.get_by_id(ds_id)
+                ds_schema = ds.get_schema() or []
+                ds_db_type = ds.query_runner.syntax or "sql"
+                schema[ds_id] = {
+                    "name": ds.name,
+                    "schema": ds_schema,
+                    "db_type": ds_db_type,
+                }
+                db_type = ds_db_type  # use last as default
             except Exception as e:
                 logger.warning(
                     "Could not fetch schema for data source %s: %s",
-                    data_source_id,
+                    ds_id,
                     e,
                 )
+
+        # If only one data source, unwrap to simple list for backwards compat
+        if len(schema) == 1:
+            only = list(schema.values())[0]
+            schema = only["schema"]
+            db_type = only["db_type"]
 
         # Append user message
         user_msg = {
@@ -165,6 +190,8 @@ class AIConversationMessageResource(BaseResource):
             assistant_msg["sql"] = ai_result["sql"]
         if ai_result.get("visualization"):
             assistant_msg["visualization"] = ai_result["visualization"]
+        if ai_result.get("target_data_source"):
+            assistant_msg["target_data_source"] = ai_result["target_data_source"]
 
         conversation.messages = list(conversation.messages) + [assistant_msg]
 

@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 
 import requests
 
@@ -11,24 +12,26 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """You are a SQL expert and data visualization advisor embedded in Redash.
 Users describe what data they want to see, and you write the SQL query AND choose the best visualization for it.
 
-DATABASE SCHEMA:
+AVAILABLE DATA SOURCES:
 {schema}
 
 DATA SOURCE TYPE: {db_type}
 
 RULES:
 1. Generate valid SQL for the {db_type} dialect. Use only tables and columns from the schema above.
-2. Always output your SQL inside a ```sql code block.
-3. Always output a visualization config inside a ```visualization code block as valid JSON.
+2. Always output your SQL inside a ```sql code block FIRST, before any other text.
+3. Always output a visualization config inside a ```visualization code block as valid JSON, immediately after the SQL block.
 4. Choose the BEST visualization type for the data:
    - Single aggregate number -> COUNTER
    - Time series data -> CHART with globalSeriesType "line"
    - Comparisons/rankings -> CHART with globalSeriesType "column"
    - Proportions/distribution -> CHART with globalSeriesType "pie"
    - Raw data / many columns -> TABLE
-5. Keep text explanations brief. Focus on delivering results.
-6. If a query error is provided, analyze it and return a corrected query.
-7. If the user asks to change the visualization, keep the same SQL and change the visualization config.
+5. After the code blocks, include AT MOST one brief sentence of explanation. Do NOT include multi-sentence explanations, step-by-step breakdowns, or descriptions of what the query does.
+6. NEVER start with preamble like "Here is a query...", "Sure!", "I can help...", "Let me...", etc. Start directly with the ```sql block.
+7. If a query error is provided, analyze it and return a corrected query.
+8. If the user asks to change the visualization, keep the same SQL and change the visualization config.
+9. When multiple data sources are available, specify which data source a query targets by adding `-- DATA_SOURCE: <name>` as the FIRST line of the SQL block.
 
 VISUALIZATION JSON FORMAT:
 For CHART type:
@@ -72,14 +75,22 @@ For COUNTER type:
 ```
 
 IMPORTANT: The columnMapping keys MUST match the exact column names/aliases in your SQL SELECT clause.
+
+EXAMPLE — User asks "show me total revenue per month":
+```sql
+SELECT DATE_TRUNC('month', order_date) AS month, SUM(amount) AS total_revenue
+FROM orders
+GROUP BY month
+ORDER BY month;
+```
+```visualization
+{{"type": "CHART", "name": "Monthly Revenue", "options": {{"globalSeriesType": "line", "columnMapping": {{"month": "x", "total_revenue": "y"}}, "legend": {{"enabled": false, "placement": "auto"}}, "xAxis": {{"type": "-", "labels": {{"enabled": true}}}}, "yAxis": [{{"type": "linear"}}], "series": {{"stacking": null}}, "numberFormat": "0,0[.]00", "missingValuesAsZero": true}}}}
+```
 """
 
 
-def format_schema_for_prompt(schema, max_tables=None):
-    """Convert Redash schema format to LLM-readable text."""
-    if max_tables is None:
-        max_tables = settings.AI_MAX_SCHEMA_TABLES
-
+def _format_single_schema(schema, max_tables):
+    """Format a single data source's schema into readable text."""
     lines = []
     for table in schema[:max_tables]:
         table_name = table.get("name", "")
@@ -102,8 +113,32 @@ def format_schema_for_prompt(schema, max_tables=None):
     return "\n".join(lines)
 
 
+def format_schema_for_prompt(schema, max_tables=None):
+    """Convert Redash schema format to LLM-readable text.
+
+    schema can be:
+      - a list of tables (single data source, legacy)
+      - a dict of {ds_id: {name, schema, db_type}} (multi data source)
+    """
+    if max_tables is None:
+        max_tables = settings.AI_MAX_SCHEMA_TABLES
+
+    if isinstance(schema, dict):
+        sections = []
+        for ds_id, ds_info in schema.items():
+            ds_name = ds_info.get("name", f"Data Source {ds_id}")
+            ds_schema = ds_info.get("schema", [])
+            ds_db_type = ds_info.get("db_type", "sql")
+            section = f"--- Data Source: {ds_name} (type: {ds_db_type}) ---\n"
+            section += _format_single_schema(ds_schema, max_tables)
+            sections.append(section)
+        return "\n\n".join(sections)
+
+    return _format_single_schema(schema, max_tables)
+
+
 def build_messages(conversation_messages, schema_text, db_type):
-    """Build the OpenAI messages array from conversation history."""
+    """Build the chat messages array from conversation history."""
     system_content = SYSTEM_PROMPT.format(schema=schema_text, db_type=db_type)
     messages = [{"role": "system", "content": system_content}]
 
@@ -116,63 +151,150 @@ def build_messages(conversation_messages, schema_text, db_type):
     return messages
 
 
-def call_openai(messages):
-    """Call the OpenAI Chat Completion API."""
-    api_key = settings.AI_OPENAI_API_KEY
-    if not api_key:
-        raise ValueError(
-            "OpenAI API key not configured. Set REDASH_AI_OPENAI_API_KEY."
-        )
-
-    base_url = settings.AI_OPENAI_BASE_URL.rstrip("/")
-    model = settings.AI_OPENAI_MODEL
+def call_llm(messages):
+    """Call the Ollama-compatible chat completion API."""
+    base_url = settings.AI_LLM_BASE_URL.rstrip("/")
+    model = settings.AI_LLM_MODEL
 
     headers = {
-        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+    # Ollama doesn't require auth, but some proxies might
+    api_key = settings.AI_LLM_API_KEY
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": 0.1,
-        "max_tokens": 4096,
+        "temperature": settings.AI_LLM_TEMPERATURE,
+        "max_tokens": settings.AI_LLM_MAX_TOKENS,
+        "stream": False,
     }
 
-    response = requests.post(
-        f"{base_url}/chat/completions",
-        headers=headers,
-        json=payload,
-        timeout=120,
-    )
-    response.raise_for_status()
+    timeout = settings.AI_LLM_TIMEOUT
+    max_retries = 2
 
-    data = response.json()
-    return data["choices"][0]["message"]["content"]
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.post(
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+
+            try:
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+            except (json.JSONDecodeError, KeyError, IndexError) as e:
+                raise ValueError(f"Invalid response from Ollama: {e}")
+
+        except requests.exceptions.ConnectionError:
+            if attempt < max_retries:
+                logger.warning(
+                    "Ollama connection failed (attempt %d/%d), retrying in 2s...",
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                time.sleep(2)
+                continue
+            raise ValueError(
+                "Cannot connect to Ollama. Ensure it is running: "
+                "'brew services start ollama' or 'ollama serve'"
+            )
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                logger.warning(
+                    "Ollama request timed out (attempt %d/%d), retrying...",
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                continue
+            raise ValueError(
+                f"Ollama request timed out after {timeout}s. "
+                "The model may still be loading. Try again shortly."
+            )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                raise ValueError(
+                    f"Model '{model}' not found in Ollama. "
+                    f"Pull it first: 'ollama pull {model}'"
+                )
+            raise
+
+
+def _try_fix_json(raw_json):
+    """Attempt to fix common JSON issues from local models."""
+    # Remove trailing commas before closing braces/brackets
+    fixed = re.sub(r",\s*([}\]])", r"\1", raw_json)
+    # Remove single-line comments
+    fixed = re.sub(r"//.*$", "", fixed, flags=re.MULTILINE)
+    return fixed
 
 
 def parse_llm_response(content):
-    """Parse the LLM response to extract SQL and visualization config."""
+    """Parse the LLM response to extract SQL, visualization config, and target data source."""
     result = {
         "content": content,
         "sql": None,
         "visualization": None,
+        "target_data_source": None,
     }
 
     # Extract SQL from ```sql ... ``` blocks
     sql_pattern = r"```sql\s*\n?(.*?)\n?\s*```"
     sql_matches = re.findall(sql_pattern, content, re.DOTALL | re.IGNORECASE)
     if sql_matches:
-        result["sql"] = sql_matches[-1].strip()
+        raw_sql = sql_matches[-1].strip()
+
+        # Extract -- DATA_SOURCE: <name> from first line
+        ds_match = re.match(r"^--\s*DATA_SOURCE:\s*(.+)", raw_sql)
+        if ds_match:
+            result["target_data_source"] = ds_match.group(1).strip()
+            # Remove the DATA_SOURCE comment from the SQL
+            raw_sql = raw_sql[ds_match.end():].strip()
+
+        result["sql"] = raw_sql
 
     # Extract visualization from ```visualization ... ``` blocks
     viz_pattern = r"```visualization\s*\n?(.*?)\n?\s*```"
     viz_matches = re.findall(viz_pattern, content, re.DOTALL | re.IGNORECASE)
     if viz_matches:
+        raw_viz = viz_matches[-1].strip()
         try:
-            result["visualization"] = json.loads(viz_matches[-1].strip())
+            result["visualization"] = json.loads(raw_viz)
         except json.JSONDecodeError:
-            logger.warning("Failed to parse visualization config from LLM response")
+            # Local models sometimes produce slightly malformed JSON — try to fix
+            try:
+                result["visualization"] = json.loads(_try_fix_json(raw_viz))
+                logger.info("Fixed malformed visualization JSON from LLM")
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Failed to parse visualization config from LLM response: %s",
+                    raw_viz[:200],
+                )
+    elif result["sql"]:
+        # Local models sometimes skip the visualization block — default to TABLE
+        result["visualization"] = {
+            "type": "TABLE",
+            "name": "Result",
+            "options": {},
+        }
+
+    # Validate visualization has required fields
+    if result["visualization"]:
+        viz = result["visualization"]
+        if "type" not in viz:
+            viz["type"] = "TABLE"
+        if viz["type"] not in ("CHART", "TABLE", "COUNTER"):
+            viz["type"] = "TABLE"
+        if "name" not in viz:
+            viz["name"] = "Result"
+        if "options" not in viz:
+            viz["options"] = {}
 
     return result
 
@@ -197,6 +319,6 @@ def generate_response(
     if len(all_messages) > max_msgs:
         all_messages = all_messages[-max_msgs:]
 
-    openai_messages = build_messages(all_messages, schema_text, db_type)
-    raw_response = call_openai(openai_messages)
+    messages = build_messages(all_messages, schema_text, db_type)
+    raw_response = call_llm(messages)
     return parse_llm_response(raw_response)

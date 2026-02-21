@@ -15,6 +15,7 @@ class AIConversation(TimestampMixin, BelongsToOrgMixin, db.Model):
     data_source_id = Column(
         key_type("DataSource"), db.ForeignKey("data_sources.id"), nullable=True
     )
+    data_source_ids = Column(MutableList.as_mutable(JSONB), default=[])
     title = Column(db.String(255), default="New Conversation")
     messages = Column(MutableList.as_mutable(JSONB), default=[])
     is_archived = Column(db.Boolean, default=False)
@@ -30,6 +31,7 @@ class AIConversation(TimestampMixin, BelongsToOrgMixin, db.Model):
             "user_id": self.user_id,
             "query_id": self.query_id,
             "data_source_id": self.data_source_id,
+            "data_source_ids": self.data_source_ids or [],
             "title": self.title,
             "messages": self.messages,
             "is_archived": self.is_archived,

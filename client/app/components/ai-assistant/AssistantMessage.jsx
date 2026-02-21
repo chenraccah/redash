@@ -76,6 +76,13 @@ export default function AssistantMessage({
           dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
         />
 
+        {/* Target data source indicator */}
+        {message.target_data_source && (
+          <div className="ai-target-ds">
+            <i className="fa fa-database" /> {message.target_data_source}
+          </div>
+        )}
+
         {/* Collapsible SQL peek */}
         {message.sql && (
           <Collapse ghost className="ai-sql-peek">
@@ -132,6 +139,7 @@ AssistantMessage.propTypes = {
     content: PropTypes.string.isRequired,
     sql: PropTypes.string,
     visualization: PropTypes.object,
+    target_data_source: PropTypes.string,
   }).isRequired,
   queryResult: PropTypes.object,
   isExecuting: PropTypes.bool,

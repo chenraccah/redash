@@ -1,0 +1,5 @@
+[build]
+dockerfilePath = "Dockerfile"
+
+[build.args]
+install_groups = "main"

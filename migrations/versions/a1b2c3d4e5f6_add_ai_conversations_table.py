@@ -1,7 +1,7 @@
 """add_ai_conversations_table
 
 Revision ID: a1b2c3d4e5f6
-Revises: e5c7a4e2df4d
+Revises: db0aca1ebd32
 Create Date: 2025-01-15 10:00:00.000000
 
 """
@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
 revision = "a1b2c3d4e5f6"
-down_revision = "e5c7a4e2df4d"
+down_revision = "db0aca1ebd32"
 branch_labels = None
 depends_on = None
 

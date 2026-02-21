@@ -4,7 +4,6 @@ import Button from "antd/lib/button";
 import Input from "antd/lib/input";
 import Spin from "antd/lib/spin";
 import Link from "@/components/Link";
-import Tooltip from "@/components/Tooltip";
 import routeWithUserSession from "@/components/ApplicationArea/routeWithUserSession";
 import routes from "@/services/routes";
 import notification from "@/services/notification";
@@ -15,6 +14,7 @@ import QueryResult from "@/services/query-result";
 import AIAssistant from "@/services/ai-assistant";
 import UserMessage from "@/components/ai-assistant/UserMessage";
 import AssistantMessage from "@/components/ai-assistant/AssistantMessage";
+import ChatHistorySidebar from "@/components/ai-assistant/ChatHistorySidebar";
 
 import "./QueryAI.less";
 
@@ -23,15 +23,29 @@ const { Option } = Select;
 
 function QueryAIPage() {
   const [dataSources, setDataSources] = useState([]);
-  const [selectedDataSourceId, setSelectedDataSourceId] = useState(null);
+  const [selectedDataSourceIds, setSelectedDataSourceIds] = useState([]);
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [queryResults, setQueryResults] = useState({});
   const [executingMessages, setExecutingMessages] = useState({});
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [conversations, setConversations] = useState([]);
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+
+  // Load conversations list
+  useEffect(() => {
+    AIAssistant.getConversations()
+      .then((result) => setConversations(result || []))
+      .catch(() => {});
+  }, []);
+
+  const refreshConversations = useCallback(() => {
+    AIAssistant.getConversations()
+      .then((result) => setConversations(result || []))
+      .catch(() => {});
+  }, []);
 
   // Load data sources
   useEffect(() => {
@@ -41,15 +55,19 @@ function QueryAIPage() {
       if (sources.length > 0) {
         // Try to restore last selected
         try {
-          const lastId = localStorage.getItem("lastSelectedDataSourceId");
-          if (lastId && sources.find((ds) => ds.id === parseInt(lastId, 10))) {
-            setSelectedDataSourceId(parseInt(lastId, 10));
-          } else {
-            setSelectedDataSourceId(sources[0].id);
+          const lastIds = localStorage.getItem("lastSelectedDataSourceIds");
+          if (lastIds) {
+            const parsed = JSON.parse(lastIds);
+            const valid = parsed.filter((id) => sources.find((ds) => ds.id === id));
+            if (valid.length > 0) {
+              setSelectedDataSourceIds(valid);
+              return;
+            }
           }
         } catch {
-          setSelectedDataSourceId(sources[0].id);
+          // ignore
         }
+        setSelectedDataSourceIds([sources[0].id]);
       }
     });
   }, []);
@@ -61,14 +79,28 @@ function QueryAIPage() {
     }
   }, [messages, executingMessages]);
 
+  const resolveDataSourceId = useCallback(
+    (targetName) => {
+      if (targetName) {
+        const match = dataSources.find(
+          (ds) => ds.name.toLowerCase() === targetName.toLowerCase()
+        );
+        if (match) return match.id;
+      }
+      return selectedDataSourceIds[0] || null;
+    },
+    [dataSources, selectedDataSourceIds]
+  );
+
   const executeSQL = useCallback(
-    (sql, messageIndex) => {
-      if (!selectedDataSourceId || !sql) return;
+    (sql, messageIndex, targetDataSourceName) => {
+      const dsId = resolveDataSourceId(targetDataSourceName);
+      if (!dsId || !sql) return;
 
       setExecutingMessages((prev) => ({ ...prev, [messageIndex]: true }));
 
       const queryResult = QueryResult.get(
-        selectedDataSourceId,
+        dsId,
         sql,
         {},
         false,
@@ -91,7 +123,7 @@ function QueryAIPage() {
           if (conversation) {
             AIAssistant.sendMessage(conversation.id, {
               message: "The query returned an error. Please fix it.",
-              data_source_id: selectedDataSourceId,
+              data_source_ids: selectedDataSourceIds,
               error_context: errorMessage,
             })
               .then((result) => {
@@ -101,7 +133,7 @@ function QueryAIPage() {
                 // Auto-execute the corrected query
                 const lastMsg = conv.messages[conv.messages.length - 1];
                 if (lastMsg && lastMsg.sql) {
-                  executeSQL(lastMsg.sql, conv.messages.length - 1);
+                  executeSQL(lastMsg.sql, conv.messages.length - 1, lastMsg.target_data_source);
                 }
               })
               .catch(() => {
@@ -110,15 +142,15 @@ function QueryAIPage() {
           }
         });
     },
-    [selectedDataSourceId, conversation]
+    [resolveDataSourceId, selectedDataSourceIds, conversation]
   );
 
   const sendMessage = useCallback(async () => {
     const text = inputValue.trim();
     if (!text || isSending) return;
 
-    if (!selectedDataSourceId) {
-      notification.warning("Please select a data source first.");
+    if (selectedDataSourceIds.length === 0) {
+      notification.warning("Please select at least one data source.");
       return;
     }
 
@@ -131,7 +163,8 @@ function QueryAIPage() {
       // Create conversation if needed
       if (!conv) {
         conv = await AIAssistant.createConversation({
-          data_source_id: selectedDataSourceId,
+          data_source_ids: selectedDataSourceIds,
+          data_source_id: selectedDataSourceIds[0],
         });
         setConversation(conv);
       }
@@ -139,17 +172,18 @@ function QueryAIPage() {
       // Send the message
       const result = await AIAssistant.sendMessage(conv.id, {
         message: text,
-        data_source_id: selectedDataSourceId,
+        data_source_ids: selectedDataSourceIds,
       });
 
       const updatedConv = result.conversation;
       setConversation(updatedConv);
       setMessages(updatedConv.messages);
+      refreshConversations();
 
       // Auto-execute SQL if present in the response
       const lastMsg = updatedConv.messages[updatedConv.messages.length - 1];
       if (lastMsg && lastMsg.sql) {
-        executeSQL(lastMsg.sql, updatedConv.messages.length - 1);
+        executeSQL(lastMsg.sql, updatedConv.messages.length - 1, lastMsg.target_data_source);
       }
     } catch (err) {
       const errorMsg =
@@ -158,7 +192,7 @@ function QueryAIPage() {
     } finally {
       setIsSending(false);
     }
-  }, [inputValue, isSending, selectedDataSourceId, conversation, executeSQL]);
+  }, [inputValue, isSending, selectedDataSourceIds, conversation, executeSQL, refreshConversations]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -171,21 +205,22 @@ function QueryAIPage() {
   );
 
   const handleEditAndRun = useCallback(
-    (sql, vizConfig, messageIndex) => {
-      executeSQL(sql, messageIndex);
+    (sql, vizConfig, messageIndex, targetDataSource) => {
+      executeSQL(sql, messageIndex, targetDataSource);
     },
     [executeSQL]
   );
 
   const handleSaveQuery = useCallback(
-    async (sql, vizConfig) => {
-      if (!selectedDataSourceId || !sql) return;
+    async (sql, vizConfig, targetDataSourceName) => {
+      const dsId = resolveDataSourceId(targetDataSourceName);
+      if (!dsId || !sql) return;
 
       try {
         const queryData = {
           name: conversation ? conversation.title : "AI Generated Query",
           query: sql,
-          data_source_id: selectedDataSourceId,
+          data_source_id: dsId,
           is_draft: false,
           options: {},
         };
@@ -212,7 +247,7 @@ function QueryAIPage() {
         notification.error("Failed to save query: " + (err.message || "Unknown error"));
       }
     },
-    [selectedDataSourceId, conversation]
+    [resolveDataSourceId, conversation]
   );
 
   const handleNewConversation = useCallback(() => {
@@ -223,11 +258,48 @@ function QueryAIPage() {
     setInputValue("");
   }, []);
 
+  const handleSelectConversation = useCallback(
+    (id) => {
+      AIAssistant.getConversation(id)
+        .then((conv) => {
+          setConversation(conv);
+          setMessages(conv.messages || []);
+          setQueryResults({});
+          setExecutingMessages({});
+          if (conv.data_source_ids && conv.data_source_ids.length > 0) {
+            setSelectedDataSourceIds(conv.data_source_ids);
+          } else if (conv.data_source_id) {
+            setSelectedDataSourceIds([conv.data_source_id]);
+          }
+        })
+        .catch(() => {
+          notification.error("Failed to load conversation.");
+        });
+    },
+    []
+  );
+
+  const handleArchiveConversation = useCallback(
+    (id) => {
+      AIAssistant.archiveConversation(id)
+        .then(() => {
+          setConversations((prev) => prev.filter((c) => c.id !== id));
+          if (conversation && conversation.id === id) {
+            handleNewConversation();
+          }
+        })
+        .catch(() => {
+          notification.error("Failed to archive conversation.");
+        });
+    },
+    [conversation, handleNewConversation]
+  );
+
   const handleDataSourceChange = useCallback(
-    (dsId) => {
-      setSelectedDataSourceId(dsId);
+    (dsIds) => {
+      setSelectedDataSourceIds(dsIds);
       try {
-        localStorage.setItem("lastSelectedDataSourceId", dsId);
+        localStorage.setItem("lastSelectedDataSourceIds", JSON.stringify(dsIds));
       } catch {
         // ignore
       }
@@ -239,117 +311,124 @@ function QueryAIPage() {
 
   return (
     <div className="query-ai-page">
-      {/* Header */}
-      <div className="query-ai-header">
-        <div className="query-ai-header__left">
-          <h3>AI Query Builder</h3>
-        </div>
-        <div className="query-ai-header__right">
-          <Select
-            className="query-ai-ds-select"
-            placeholder="Select Data Source"
-            value={selectedDataSourceId}
-            onChange={handleDataSourceChange}
-            showSearch
-            optionFilterProp="children">
-            {dataSources.map((ds) => (
-              <Option key={ds.id} value={ds.id}>
-                {ds.name}
-              </Option>
-            ))}
-          </Select>
-          <Tooltip title="New Conversation">
-            <Button onClick={handleNewConversation}>
-              <i className="fa fa-plus" /> New Chat
-            </Button>
-          </Tooltip>
-        </div>
-      </div>
-
-      {/* Chat area */}
-      <div className="query-ai-chat" ref={chatContainerRef}>
-        {messages.length === 0 && (
-          <div className="query-ai-empty">
-            <div className="query-ai-empty__icon">
-              <i className="fa fa-magic" />
-            </div>
-            <h2>What do you want to explore?</h2>
-            <p>
-              Describe the data you want to see in plain language. I'll write the SQL query and
-              pick the best visualization for you.
-            </p>
-            <div className="query-ai-empty__examples">
-              <Button
-                className="query-ai-example-btn"
-                onClick={() => setInputValue("Show me total sales by month for the past year")}>
-                Total sales by month
-              </Button>
-              <Button
-                className="query-ai-example-btn"
-                onClick={() => setInputValue("What are the top 10 customers by revenue?")}>
-                Top 10 customers
-              </Button>
-              <Button
-                className="query-ai-example-btn"
-                onClick={() =>
-                  setInputValue("Show me the distribution of orders by status as a pie chart")
-                }>
-                Orders by status
-              </Button>
-            </div>
+      <ChatHistorySidebar
+        conversations={conversations}
+        activeConversationId={conversation ? conversation.id : null}
+        onSelect={handleSelectConversation}
+        onArchive={handleArchiveConversation}
+        onNewChat={handleNewConversation}
+      />
+      <div className="query-ai-main">
+        {/* Header */}
+        <div className="query-ai-header">
+          <div className="query-ai-header__left">
+            <h3>AI Query Builder</h3>
           </div>
-        )}
-
-        {messages.map((msg, idx) =>
-          msg.role === "user" ? (
-            <UserMessage key={idx} content={msg.content} />
-          ) : (
-            <AssistantMessage
-              key={idx}
-              message={msg}
-              queryResult={queryResults[idx]}
-              isExecuting={!!executingMessages[idx]}
-              onEditAndRun={(sql, vizConfig) => handleEditAndRun(sql, vizConfig, idx)}
-              onSaveQuery={handleSaveQuery}
-            />
-          )
-        )}
-
-        {isSending && (
-          <div className="ai-message ai-message--loading">
-            <div className="ai-message__avatar ai-message__avatar--assistant">
-              <i className="fa fa-magic" />
-            </div>
-            <div className="ai-message__bubble ai-message__bubble--assistant">
-              <Spin size="small" /> Thinking...
-            </div>
+          <div className="query-ai-header__right">
+            <Select
+              className="query-ai-ds-select"
+              mode="multiple"
+              placeholder="Select Data Sources"
+              value={selectedDataSourceIds}
+              onChange={handleDataSourceChange}
+              showSearch
+              optionFilterProp="children"
+              maxTagCount={2}
+              maxTagPlaceholder={(omitted) => `+${omitted.length} more`}>
+              {dataSources.map((ds) => (
+                <Option key={ds.id} value={ds.id}>
+                  {ds.name}
+                </Option>
+              ))}
+            </Select>
           </div>
-        )}
+        </div>
 
-        <div ref={messagesEndRef} />
-      </div>
+        {/* Chat area */}
+        <div className="query-ai-chat" ref={chatContainerRef}>
+          {messages.length === 0 && (
+            <div className="query-ai-empty">
+              <div className="query-ai-empty__icon">
+                <i className="fa fa-magic" />
+              </div>
+              <h2>What do you want to explore?</h2>
+              <p>
+                Describe the data you want to see in plain language. I'll write the SQL query and
+                pick the best visualization for you.
+              </p>
+              <div className="query-ai-empty__examples">
+                <Button
+                  className="query-ai-example-btn"
+                  onClick={() => setInputValue("Show me total sales by month for the past year")}>
+                  Total sales by month
+                </Button>
+                <Button
+                  className="query-ai-example-btn"
+                  onClick={() => setInputValue("What are the top 10 customers by revenue?")}>
+                  Top 10 customers
+                </Button>
+                <Button
+                  className="query-ai-example-btn"
+                  onClick={() =>
+                    setInputValue("Show me the distribution of orders by status as a pie chart")
+                  }>
+                  Orders by status
+                </Button>
+              </div>
+            </div>
+          )}
 
-      {/* Input bar */}
-      <div className="query-ai-input">
-        <TextArea
-          placeholder={
-            selectedDataSourceId
-              ? "Describe what data you want to see..."
-              : "Select a data source first..."
-          }
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoSize={{ minRows: 1, maxRows: 4 }}
-          disabled={isSending || !selectedDataSourceId}
-        />
-        <Button
-          type="primary"
-          disabled={!inputValue.trim() || isSending || !selectedDataSourceId}
-          onClick={sendMessage}
-          loading={isSending}>
-          <i className="fa fa-paper-plane" />
-        </Button>
+          {messages.map((msg, idx) =>
+            msg.role === "user" ? (
+              <UserMessage key={idx} content={msg.content} />
+            ) : (
+              <AssistantMessage
+                key={idx}
+                message={msg}
+                queryResult={queryResults[idx]}
+                isExecuting={!!executingMessages[idx]}
+                onEditAndRun={(sql, vizConfig) => handleEditAndRun(sql, vizConfig, idx, msg.target_data_source)}
+                onSaveQuery={(sql, vizConfig) => handleSaveQuery(sql, vizConfig, msg.target_data_source)}
+              />
+            )
+          )}
+
+          {isSending && (
+            <div className="ai-message ai-message--loading">
+              <div className="ai-message__avatar ai-message__avatar--assistant">
+                <i className="fa fa-magic" />
+              </div>
+              <div className="ai-message__bubble ai-message__bubble--assistant">
+                <Spin size="small" /> Thinking...
+              </div>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input bar */}
+        <div className="query-ai-input">
+          <TextArea
+            placeholder={
+              selectedDataSourceIds.length > 0
+                ? "Describe what data you want to see..."
+                : "Select a data source first..."
+            }
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            autoSize={{ minRows: 1, maxRows: 4 }}
+            disabled={isSending || selectedDataSourceIds.length === 0}
+          />
+          <Button
+            type="primary"
+            disabled={!inputValue.trim() || isSending || selectedDataSourceIds.length === 0}
+            onClick={sendMessage}
+            loading={isSending}>
+            <i className="fa fa-paper-plane" />
+          </Button>
+        </div>
       </div>
     </div>
   );

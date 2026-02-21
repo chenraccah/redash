@@ -13,6 +13,7 @@ import logoUrl from "@/assets/images/redash_icon_small.png";
 import DesktopOutlinedIcon from "@ant-design/icons/DesktopOutlined";
 import CodeOutlinedIcon from "@ant-design/icons/CodeOutlined";
 import AlertOutlinedIcon from "@ant-design/icons/AlertOutlined";
+import RobotOutlinedIcon from "@ant-design/icons/RobotOutlined";
 import PlusOutlinedIcon from "@ant-design/icons/PlusOutlined";
 import QuestionCircleOutlinedIcon from "@ant-design/icons/QuestionCircleOutlined";
 import SettingOutlinedIcon from "@ant-design/icons/SettingOutlined";
@@ -58,6 +59,7 @@ function useNavbarActiveState() {
       ),
       dataSources: includes(["DataSources.List"], currentRoute.id),
       alerts: includes(["Alerts.List", "Alerts.New", "Alerts.View", "Alerts.Edit"], currentRoute.id),
+      aiQuery: includes(["Queries.AI"], currentRoute.id),
     }),
     [currentRoute.id]
   );
@@ -104,6 +106,14 @@ export default function DesktopNavbar() {
             <Link href="alerts">
               <AlertOutlinedIcon aria-label="Alerts navigation button" />
               <span className="desktop-navbar-label">Alerts</span>
+            </Link>
+          </Menu.Item>
+        )}
+        {currentUser.hasPermission("create_query") && (
+          <Menu.Item key="ai-query" className={activeState.aiQuery ? "navbar-active-item" : null}>
+            <Link href="queries/ai">
+              <RobotOutlinedIcon aria-label="AI Query navigation button" />
+              <span className="desktop-navbar-label">AI Query</span>
             </Link>
           </Menu.Item>
         )}

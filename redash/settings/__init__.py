@@ -431,11 +431,14 @@ FEATURE_ALLOW_CUSTOM_JS_VISUALIZATIONS = parse_boolean(
 FEATURE_AUTO_PUBLISH_NAMED_QUERIES = parse_boolean(os.environ.get("REDASH_FEATURE_AUTO_PUBLISH_NAMED_QUERIES", "true"))
 FEATURE_EXTENDED_ALERT_OPTIONS = parse_boolean(os.environ.get("REDASH_FEATURE_EXTENDED_ALERT_OPTIONS", "false"))
 
-# AI Assistant (LLM) Settings
+# AI Assistant (LLM) Settings — Ollama / local model
 AI_ASSISTANT_ENABLED = parse_boolean(os.environ.get("REDASH_AI_ASSISTANT_ENABLED", "false"))
-AI_OPENAI_API_KEY = os.environ.get("REDASH_AI_OPENAI_API_KEY", "")
-AI_OPENAI_MODEL = os.environ.get("REDASH_AI_OPENAI_MODEL", "gpt-4")
-AI_OPENAI_BASE_URL = os.environ.get("REDASH_AI_OPENAI_BASE_URL", "https://api.openai.com/v1")
+AI_LLM_API_KEY = os.environ.get("REDASH_AI_LLM_API_KEY", "")
+AI_LLM_MODEL = os.environ.get("REDASH_AI_LLM_MODEL", "qwen2.5-coder:14b")
+AI_LLM_BASE_URL = os.environ.get("REDASH_AI_LLM_BASE_URL", "http://localhost:11434/v1")
+AI_LLM_TEMPERATURE = float(os.environ.get("REDASH_AI_LLM_TEMPERATURE", "0.1"))
+AI_LLM_MAX_TOKENS = int(os.environ.get("REDASH_AI_LLM_MAX_TOKENS", "4096"))
+AI_LLM_TIMEOUT = int(os.environ.get("REDASH_AI_LLM_TIMEOUT", "300"))
 AI_MAX_SCHEMA_TABLES = int(os.environ.get("REDASH_AI_MAX_SCHEMA_TABLES", "200"))
 AI_MAX_CONVERSATION_MESSAGES = int(os.environ.get("REDASH_AI_MAX_CONVERSATION_MESSAGES", "50"))
 
