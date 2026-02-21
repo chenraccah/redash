@@ -139,6 +139,7 @@ class AIConversationMessageResource(BaseResource):
                 ds_db_type = ds.query_runner.syntax or "sql"
                 schema[ds_id] = {
                     "name": ds.name,
+                    "description": ds.description or "",
                     "schema": ds_schema,
                     "db_type": ds_db_type,
                 }
@@ -150,10 +151,10 @@ class AIConversationMessageResource(BaseResource):
                     e,
                 )
 
-        # If only one data source, unwrap to simple list for backwards compat
+        # If only one data source, extract db_type but keep dict format
+        # to preserve name and description for the LLM prompt
         if len(schema) == 1:
             only = list(schema.values())[0]
-            schema = only["schema"]
             db_type = only["db_type"]
 
         # Append user message

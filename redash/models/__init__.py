@@ -116,6 +116,7 @@ class DataSource(BelongsToOrgMixin, db.Model):
     org = db.relationship(Organization, backref="data_sources")
 
     name = Column(db.String(255))
+    description = Column(db.Text, nullable=True)
     type = Column(db.String(255))
     options = Column(
         "encrypted_options",
@@ -144,6 +145,7 @@ class DataSource(BelongsToOrgMixin, db.Model):
         d = {
             "id": self.id,
             "name": self.name,
+            "description": self.description,
             "type": self.type,
             "syntax": self.query_runner.syntax,
             "paused": self.paused,

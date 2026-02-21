@@ -96,9 +96,17 @@ function getFields(type = {}, target = { options: {} }) {
       type: "text",
       required: true,
       initialValue: target.name,
-      contentAfter: React.createElement("hr"),
       placeholder: `My ${type.name}`,
       autoFocus: isNewTarget,
+    },
+    {
+      name: "description",
+      title: "Description (AI Context)",
+      type: "textarea",
+      required: false,
+      initialValue: target.description || "",
+      placeholder: "Describe your data domain for the AI assistant (e.g., 'Insurance claims database — policies track coverage, claims track incidents')",
+      contentAfter: React.createElement("hr"),
     },
     ...orderedInputs(configurationSchema.properties, configurationSchema.order, target.options),
   ];
@@ -108,8 +116,9 @@ function getFields(type = {}, target = { options: {} }) {
 
 function updateTargetWithValues(target, values) {
   target.name = values.name;
+  target.description = values.description || "";
   Object.keys(values).forEach(key => {
-    if (key !== "name") {
+    if (key !== "name" && key !== "description") {
       target.options[key] = values[key];
     }
   });

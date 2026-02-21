@@ -130,6 +130,9 @@ def format_schema_for_prompt(schema, max_tables=None):
             ds_schema = ds_info.get("schema", [])
             ds_db_type = ds_info.get("db_type", "sql")
             section = f"--- Data Source: {ds_name} (type: {ds_db_type}) ---\n"
+            ds_desc = ds_info.get("description", "")
+            if ds_desc:
+                section += f"Description: {ds_desc}\n"
             section += _format_single_schema(ds_schema, max_tables)
             sections.append(section)
         return "\n\n".join(sections)

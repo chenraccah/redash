@@ -65,6 +65,8 @@ class DataSourceResource(BaseResource):
 
         data_source.type = req["type"]
         data_source.name = req["name"]
+        if "description" in req:
+            data_source.description = req["description"]
         models.db.session.add(data_source)
 
         try:
@@ -143,7 +145,7 @@ class DataSourceListResource(BaseResource):
 
         try:
             datasource = models.DataSource.create_with_group(
-                org=self.current_org, name=req["name"], type=req["type"], options=config
+                org=self.current_org, name=req["name"], description=req.get("description"), type=req["type"], options=config
             )
 
             models.db.session.commit()
