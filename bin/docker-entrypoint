@@ -45,6 +45,24 @@ server() {
   # Auto-create DB tables if they don't exist (safe for PaaS deployments)
   /app/manage.py database create_tables 2>/dev/null || true
 
+  # Apply schema migrations for existing databases (idempotent)
+  if [ -n "$REDASH_DATABASE_URL" ]; then
+    python -c "
+import sqlalchemy, sys
+engine = sqlalchemy.create_engine('$REDASH_DATABASE_URL')
+with engine.connect() as conn:
+    # Add description column to data_sources if it doesn't exist
+    result = conn.execute(sqlalchemy.text(
+        \"SELECT column_name FROM information_schema.columns WHERE table_name='data_sources' AND column_name='description'\"
+    ))
+    if result.fetchone() is None:
+        conn.execute(sqlalchemy.text('ALTER TABLE data_sources ADD COLUMN description TEXT'))
+        print('Added description column to data_sources')
+    else:
+        print('description column already exists')
+" 2>/dev/null || true
+  fi
+
   # Recycle gunicorn workers every n-th request. See http://docs.gunicorn.org/en/stable/settings.html#max-requests for more details.
   MAX_REQUESTS=${MAX_REQUESTS:-1000}
   MAX_REQUESTS_JITTER=${MAX_REQUESTS_JITTER:-100}
