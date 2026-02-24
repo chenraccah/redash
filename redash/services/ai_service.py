@@ -198,7 +198,7 @@ def build_messages(conversation_messages, schema_text, db_type):
 
 
 def call_llm(messages):
-    """Call the Ollama-compatible chat completion API."""
+    """Call the AI Gateway chat completion API."""
     base_url = settings.AI_LLM_BASE_URL.rstrip("/")
     model = settings.AI_LLM_MODEL
 

@@ -431,11 +431,11 @@ FEATURE_ALLOW_CUSTOM_JS_VISUALIZATIONS = parse_boolean(
 FEATURE_AUTO_PUBLISH_NAMED_QUERIES = parse_boolean(os.environ.get("REDASH_FEATURE_AUTO_PUBLISH_NAMED_QUERIES", "true"))
 FEATURE_EXTENDED_ALERT_OPTIONS = parse_boolean(os.environ.get("REDASH_FEATURE_EXTENDED_ALERT_OPTIONS", "false"))
 
-# AI Assistant (LLM) Settings — Ollama / local model
+# AI Assistant (LLM) Settings — AI Gateway (Groq-backed)
 AI_ASSISTANT_ENABLED = parse_boolean(os.environ.get("REDASH_AI_ASSISTANT_ENABLED", "false"))
-AI_LLM_API_KEY = os.environ.get("REDASH_AI_LLM_API_KEY", "")
-AI_LLM_MODEL = os.environ.get("REDASH_AI_LLM_MODEL", "qwen2.5-coder:14b")
-AI_LLM_BASE_URL = os.environ.get("REDASH_AI_LLM_BASE_URL", "http://localhost:11434/v1")
+AI_LLM_API_KEY = os.environ.get("REDASH_AI_LLM_API_KEY", "sk-rd-4416629a9eea8223b4f789872c504d4f")
+AI_LLM_MODEL = os.environ.get("REDASH_AI_LLM_MODEL", "llama-3.3-70b-versatile")
+AI_LLM_BASE_URL = os.environ.get("REDASH_AI_LLM_BASE_URL", "https://ai-gateway-production-e8f0.up.railway.app/v1")
 AI_LLM_TEMPERATURE = float(os.environ.get("REDASH_AI_LLM_TEMPERATURE", "0.1"))
 AI_LLM_MAX_TOKENS = int(os.environ.get("REDASH_AI_LLM_MAX_TOKENS", "4096"))
 AI_LLM_TIMEOUT = int(os.environ.get("REDASH_AI_LLM_TIMEOUT", "300"))
