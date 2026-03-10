@@ -8,6 +8,10 @@ import VisualizationRenderer from "@/components/visualizations/VisualizationRend
 
 const { Panel } = Collapse;
 
+function hasHebrew(text) {
+  return /[\u0590-\u05FF]/.test(text);
+}
+
 function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -165,7 +169,7 @@ export default function AssistantMessage({
         {/* Text explanation */}
         <div
           className="ai-message__text"
-          dir="auto"
+          dir={hasHebrew(message.content) ? "rtl" : "ltr"}
           dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
         />
 
