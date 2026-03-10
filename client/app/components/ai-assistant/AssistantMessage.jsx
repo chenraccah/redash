@@ -165,6 +165,7 @@ export default function AssistantMessage({
         {/* Text explanation */}
         <div
           className="ai-message__text"
+          dir="auto"
           dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
         />
 

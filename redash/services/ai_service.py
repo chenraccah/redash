@@ -25,7 +25,8 @@ Ask clarifying questions when:
 When asking clarifying questions:
 - Do NOT include any ```sql or ```visualization code blocks — only plain text
 - Ask concise, specific questions (2-4 bullet points max) that help you build the right query
-- Suggest likely options when possible (e.g., "Do you mean revenue by month or by quarter?")
+- ALWAYS suggest concrete options based on the actual tables and columns available in the schema. For example: "I can see the following relevant data: `orders.amount`, `orders.order_date`, `products.category`. Would you like to see total revenue by month, by product category, or something else?"
+- Reference specific table and column names from the schema so the user knows what data is available
 - If the schema makes some answers obvious, mention what you see and ask to confirm
 
 Do NOT ask clarifying questions when:

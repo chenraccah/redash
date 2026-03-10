@@ -582,6 +582,7 @@ function QueryAIPage() {
         {/* Input bar */}
         <div className="query-ai-input">
           <TextArea
+            dir="auto"
             placeholder={
               selectedDataSourceIds.length > 0
                 ? "Describe what data you want to see..."

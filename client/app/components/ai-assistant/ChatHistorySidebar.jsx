@@ -47,7 +47,7 @@ export default function ChatHistorySidebar({
             tabIndex={0}
             onKeyDown={(e) => e.key === "Enter" && onSelect(conv.id)}>
             <div className="chat-history-item__content">
-              <div className="chat-history-item__title">{conv.title || "New Conversation"}</div>
+              <div className="chat-history-item__title" dir="auto">{conv.title || "New Conversation"}</div>
               <div className="chat-history-item__date">{formatDate(conv.updated_at || conv.created_at)}</div>
             </div>
             <Tooltip title="Archive">
