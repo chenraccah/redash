@@ -206,6 +206,8 @@ class AIConversationMessageResource(BaseResource):
             assistant_msg["visualization"] = ai_result["visualization"]
         if ai_result.get("target_data_source"):
             assistant_msg["target_data_source"] = ai_result["target_data_source"]
+        if ai_result.get("is_clarification"):
+            assistant_msg["is_clarification"] = True
 
         conversation.messages = list(conversation.messages) + [assistant_msg]
 

@@ -14,6 +14,26 @@ Users describe what data they want to see, and you write the SQL query AND choos
 
 LANGUAGE RULE: Always respond in the SAME language the user writes in. If the user writes in Hebrew, your explanation, chart titles, counter labels, and chart name MUST all be in Hebrew. If in English, respond in English. Match the user's language exactly.
 
+CLARIFICATION RULE:
+Before generating SQL, assess whether the user's request is clear enough to produce a useful, specific query.
+Ask clarifying questions when:
+- The request is very short or vague (e.g., "show me sales", "revenue", "users", "data")
+- Key details are ambiguous — such as time range, grouping, filters, or which metric to use
+- Multiple interpretations are possible and the wrong one would waste the user's time
+- The user references a concept that could map to several tables or columns
+
+When asking clarifying questions:
+- Do NOT include any ```sql or ```visualization code blocks — only plain text
+- Ask concise, specific questions (2-4 bullet points max) that help you build the right query
+- Suggest likely options when possible (e.g., "Do you mean revenue by month or by quarter?")
+- If the schema makes some answers obvious, mention what you see and ask to confirm
+
+Do NOT ask clarifying questions when:
+- The request is specific enough to produce a meaningful query (e.g., "show me total orders per month for the last year")
+- The user is responding to your previous clarifying questions — use their answers to generate the query now
+- The user asks to modify a previous query or visualization (e.g., "show as pie chart", "add a filter")
+- An error context is provided — fix the error instead
+
 AVAILABLE DATA SOURCES:
 {schema}
 
@@ -206,7 +226,6 @@ def call_llm(messages):
         "Content-Type": "application/json",
     }
 
-    # Ollama doesn't require auth, but some proxies might
     api_key = settings.AI_LLM_API_KEY
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -236,38 +255,38 @@ def call_llm(messages):
                 data = response.json()
                 return data["choices"][0]["message"]["content"]
             except (json.JSONDecodeError, KeyError, IndexError) as e:
-                raise ValueError(f"Invalid response from Ollama: {e}")
+                raise ValueError(f"Invalid response from AI Gateway: {e}")
 
         except requests.exceptions.ConnectionError:
             if attempt < max_retries:
                 logger.warning(
-                    "Ollama connection failed (attempt %d/%d), retrying in 2s...",
+                    "AI Gateway connection failed (attempt %d/%d), retrying in 2s...",
                     attempt + 1,
                     max_retries + 1,
                 )
                 time.sleep(2)
                 continue
             raise ValueError(
-                "Cannot connect to Ollama. Ensure it is running: "
-                "'brew services start ollama' or 'ollama serve'"
+                "Cannot connect to AI Gateway. "
+                "Check that REDASH_AI_LLM_BASE_URL is correct and the service is reachable."
             )
         except requests.exceptions.Timeout:
             if attempt < max_retries:
                 logger.warning(
-                    "Ollama request timed out (attempt %d/%d), retrying...",
+                    "AI Gateway request timed out (attempt %d/%d), retrying...",
                     attempt + 1,
                     max_retries + 1,
                 )
                 continue
             raise ValueError(
-                f"Ollama request timed out after {timeout}s. "
-                "The model may still be loading. Try again shortly."
+                f"AI Gateway request timed out after {timeout}s. "
+                "Try again shortly or increase REDASH_AI_LLM_TIMEOUT."
             )
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 404:
                 raise ValueError(
-                    f"Model '{model}' not found in Ollama. "
-                    f"Pull it first: 'ollama pull {model}'"
+                    f"Model '{model}' not found. "
+                    f"Check REDASH_AI_LLM_MODEL is correct."
                 )
             raise
 
@@ -310,6 +329,7 @@ def parse_llm_response(content):
         "sql": None,
         "visualization": None,
         "target_data_source": None,
+        "is_clarification": False,
     }
 
     # Extract SQL from ```sql ... ``` blocks
@@ -401,6 +421,10 @@ def parse_llm_response(content):
             if aliases:
                 opts["counterColName"] = aliases[-1]  # last alias is usually the aggregate
                 opts.setdefault("rowNumber", 1)
+
+    # If no SQL was generated, this is a clarification question
+    if not result["sql"]:
+        result["is_clarification"] = True
 
     return result
 
